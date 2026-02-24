@@ -1,0 +1,51 @@
+[workspace]
+members = [
+  "crates/audio",
+  "crates/core",
+  "crates/cpu-i960",
+  "crates/cpu-m68k",
+  "crates/frontend",
+  "crates/tgp",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["ZengGengSen"]
+license = "MIT"
+
+[workspace.dependencies]
+# logger
+log        = "0.4.29"
+env_logger = "0.11.9"
+
+# ZIP reader
+zip = "8.1.0"
+
+# CRC32
+crc32fast = "1.5.0"
+
+# error handler
+anyhow = "1"
+thiserror = "2.0.18"
+
+# internal crates
+model2-core      = { path = "crates/core" }
+model2-cpu-i960  = { path = "crates/cpu-i960" }
+model2-cpu-m68k  = { path = "crates/cpu-m68k" }
+model2-tgp       = { path = "crates/tgp" }
+model2-audio     = { path = "crates/audio" }
+model2-frontend  = { path = "crates/frontend" }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

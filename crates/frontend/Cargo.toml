@@ -1,0 +1,24 @@
+[package]
+name = "model2-frontend"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+model2-audio    = { workspace = true }
+model2-core     = { workspace = true }
+model2-cpu-i960 = { workspace = true }
+model2-cpu-m68k = { workspace = true }
+model2-tgp      = { workspace = true }
+
+env_logger      = { workspace = true }
+log             = { workspace = true }
+thiserror       = { workspace = true }
+anyhow          = { workspace = true }
+
+winit  = "0.30.12"
+pixels = "0.15.0"
+
+cpal = "0.17.3"
+
