@@ -240,4 +240,137 @@ mod tests {
         let bus = make_bus_with_rom(&[0x0800_0004, 0x5900_0001, 0x9200_0100]);
         disasm_range(0x0080_0000, 3, &bus);
     }
+
+    // -----------------------------------------------------------------------
+    // 新增综合测试
+    // -----------------------------------------------------------------------
+
+    /// format_insn 直接测试（绕过总线）。
+    fn fmt(insn: Insn, addr: u32) -> String {
+        format_insn(&insn, addr)
+    }
+
+    #[test]
+    fn disasm_ctrl_mnemonics() {
+        assert!(fmt(Insn::Ret, 0).contains("ret"));
+        assert!(fmt(Insn::Bno, 0).contains("bno"));
+        assert!(fmt(Insn::B   { disp: 8 }, 0x100).contains("0x00000108"));
+        assert!(fmt(Insn::Call { disp: 0 }, 0x200).contains("call"));
+        assert!(fmt(Insn::Bal  { disp: 4 }, 0x100).contains("bal"));
+        assert!(fmt(Insn::Bg   { disp: 8 }, 0x100).starts_with("bg"));
+        assert!(fmt(Insn::Be   { disp: 8 }, 0x100).starts_with("be"));
+        assert!(fmt(Insn::Bge  { disp: 8 }, 0x100).starts_with("bge"));
+        assert!(fmt(Insn::Bl   { disp: 8 }, 0x100).starts_with("bl"));
+        assert!(fmt(Insn::Bne  { disp: 8 }, 0x100).starts_with("bne"));
+        assert!(fmt(Insn::Ble  { disp: 8 }, 0x100).starts_with("ble"));
+        assert!(fmt(Insn::Bo   { disp: 8 }, 0x100).starts_with("bo"));
+    }
+
+    #[test]
+    fn disasm_cobr_mnemonics() {
+        let masks: &[(&str, u8)] = &[
+            ("cmpobe",  0b010),
+            ("cmpobg",  0b100),
+            ("cmpobge", 0b110),
+            ("cmpobl",  0b001),
+            ("cmpoble", 0b011),
+            ("cmpobne", 0b101),
+        ];
+        for &(mnemonic, mask) in masks {
+            let text = fmt(
+                Insn::Cmpob { src1: 0, src2: 1, disp: 8, mask },
+                0x100,
+            );
+            assert!(text.contains(mnemonic), "mask={:#05b}: got '{}'", mask, text);
+        }
+        // Bbc / Bbs
+        let bbc = fmt(Insn::Bbc { bit_pos: 2, src: 3, disp: 8 }, 0x100);
+        assert!(bbc.contains("bbc"), "got: {}", bbc);
+        let bbs = fmt(Insn::Bbs { bit_pos: 2, src: 3, disp: 8 }, 0x100);
+        assert!(bbs.contains("bbs"), "got: {}", bbs);
+    }
+
+    #[test]
+    fn disasm_reg_mnemonics() {
+        // 数据移动
+        assert!(fmt(Insn::Mov   { dst: 0, src: 1 }, 0).contains("mov"));
+        assert!(fmt(Insn::LdLit { dst: 0, lit: 5 }, 0).contains("ldconst"));
+
+        // 整数运算
+        assert!(fmt(Insn::Add  { dst: 0, src1: 1, src2: 2 }, 0).contains("addi"));
+        assert!(fmt(Insn::Addo { dst: 0, src1: 1, src2: 2 }, 0).contains("addo"));
+        assert!(fmt(Insn::Sub  { dst: 0, src1: 1, src2: 2 }, 0).contains("subi"));
+        assert!(fmt(Insn::Subo { dst: 0, src1: 1, src2: 2 }, 0).contains("subo"));
+        assert!(fmt(Insn::Mul  { dst: 0, src1: 1, src2: 2 }, 0).contains("muli"));
+        assert!(fmt(Insn::Divo { dst: 0, src1: 1, src2: 2 }, 0).contains("divo"));
+        assert!(fmt(Insn::Remo { dst: 0, src1: 1, src2: 2 }, 0).contains("remo"));
+
+        // 位运算
+        assert!(fmt(Insn::And  { dst: 0, src1: 1, src2: 2 }, 0).contains("and"));
+        assert!(fmt(Insn::Or   { dst: 0, src1: 1, src2: 2 }, 0).contains("or"));
+        assert!(fmt(Insn::Xor  { dst: 0, src1: 1, src2: 2 }, 0).contains("xor"));
+        assert!(fmt(Insn::Nand { dst: 0, src1: 1, src2: 2 }, 0).contains("nand"));
+        assert!(fmt(Insn::Nor  { dst: 0, src1: 1, src2: 2 }, 0).contains("nor"));
+        assert!(fmt(Insn::Xnor { dst: 0, src1: 1, src2: 2 }, 0).contains("xnor"));
+        assert!(fmt(Insn::Not  { dst: 0, src: 1 }, 0).contains("not"));
+
+        // 移位
+        assert!(fmt(Insn::Shlo { dst: 0, src: 1, cnt: 2 }, 0).contains("shlo"));
+        assert!(fmt(Insn::Shro { dst: 0, src: 1, cnt: 2 }, 0).contains("shro"));
+        assert!(fmt(Insn::Shli { dst: 0, src: 1, cnt: 2 }, 0).contains("shli"));
+        assert!(fmt(Insn::Shri { dst: 0, src: 1, cnt: 2 }, 0).contains("shri"));
+
+        // 比较
+        assert!(fmt(Insn::Cmpo { src1: 1, src2: 2 }, 0).contains("cmpo"));
+        assert!(fmt(Insn::Cmpi { src1: 1, src2: 2 }, 0).contains("cmpi"));
+    }
+
+    #[test]
+    fn disasm_mem_mnemonics() {
+        // load
+        assert!(fmt(Insn::Ld   { dst: 0, abase: 1, offset: 0x10 }, 0).contains("ld"));
+        assert!(fmt(Insn::Ldob { dst: 0, abase: 1, offset: 0 },    0).contains("ldob"));
+        assert!(fmt(Insn::Ldos { dst: 0, abase: 1, offset: 0 },    0).contains("ldos"));
+        assert!(fmt(Insn::Ldib { dst: 0, abase: 1, offset: 0 },    0).contains("ldib"));
+        assert!(fmt(Insn::Ldis { dst: 0, abase: 1, offset: 0 },    0).contains("ldis"));
+
+        // store（操作数顺序相反：寄存器先，内存后）
+        let st = fmt(Insn::St   { src: 2, abase: 1, offset: 0x40 }, 0);
+        assert!(st.contains("st"), "got: {}", st);
+        assert!(st.contains("g2"), "got: {}", st);
+
+        assert!(fmt(Insn::Stob { src: 2, abase: 1, offset: 0 }, 0).contains("stob"));
+        assert!(fmt(Insn::Stos { src: 2, abase: 1, offset: 0 }, 0).contains("stos"));
+    }
+
+    /// MEM 格式：offset=0 时只打印 (abase)，否则打印 offset(abase)。
+    #[test]
+    fn disasm_mem_offset_format() {
+        let no_offset = fmt(Insn::Ld { dst: 0, abase: 1, offset: 0 }, 0);
+        assert!(no_offset.contains("(g1)"), "got: {}", no_offset);
+        assert!(!no_offset.contains("0x0("), "got: {}", no_offset);
+
+        let with_offset = fmt(Insn::Ld { dst: 0, abase: 1, offset: 0x10 }, 0);
+        assert!(with_offset.contains("0x10(g1)"), "got: {}", with_offset);
+    }
+
+    /// 未实现指令输出 .word 标记。
+    #[test]
+    fn disasm_unimplemented() {
+        let text = fmt(Insn::Unimplemented { raw: 0xDEAD_BEEF }, 0);
+        assert!(text.contains(".word"), "got: {}", text);
+        assert!(text.to_uppercase().contains("UNIMPLEMENTED"), "got: {}", text);
+    }
+
+    /// 反汇编结果长度始终为 4 字节。
+    #[test]
+    fn disasm_one_always_four_bytes() {
+        let words = [0x0800_0000u32, 0x5900_0001, 0x9200_0100];
+        let bus = make_bus_with_rom(&words);
+        for (i, _) in words.iter().enumerate() {
+            let addr = 0x0080_0000 + (i as u32) * 4;
+            let (_, len) = disasm_one(addr, &bus);
+            assert_eq!(len, 4, "addr={:#010x}", addr);
+        }
+    }
 }
