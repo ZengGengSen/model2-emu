@@ -169,4 +169,78 @@ mod tests {
         r.w(5, 0xDEAD_BEEF);
         assert_eq!(r.r(5), 0xDEAD_BEEF);
     }
+
+    // --- 新增综合测试 ---
+
+    /// 全部 8 种 CondCode 位组合均可无损往返转换。
+    #[test]
+    fn cc_all_bit_combinations() {
+        for bits in 0u8..8 {
+            let cc = CondCode::from_bits(bits);
+            assert_eq!(cc.to_bits(), bits, "roundtrip failed for bits={}", bits);
+        }
+    }
+
+    /// set_cc 只修改 AC[2:0]，不影响高位。
+    #[test]
+    fn set_cc_preserves_upper_ac_bits() {
+        let mut r = Regs::new();
+        r.ac = 0xFFFF_FFF8; // 高位全 1，低 3 位清零
+        r.set_cc(CondCode { n: false, e: true, g: false }); // e=1 → bits=0b010=2
+        assert_eq!(r.ac & !0x7, 0xFFFF_FFF8, "upper bits changed");
+        assert_eq!(r.ac & 0x7, 2, "cc bits wrong");
+    }
+
+    /// 寄存器编号边界：g0(0) 和 r15(31) 均可读写。
+    #[test]
+    fn reg_boundary_indices() {
+        let mut r = Regs::new();
+        r.w(0, 0x1234_5678);
+        assert_eq!(r.r(0), 0x1234_5678);
+        r.w(31, 0xABCD_EF01);
+        assert_eq!(r.r(31), 0xABCD_EF01);
+    }
+
+    /// 新建寄存器堆时所有字段均为 0。
+    #[test]
+    fn new_regs_zero_initialized() {
+        let r = Regs::new();
+        assert_eq!(r.ip, 0);
+        assert_eq!(r.ac, 0);
+        assert_eq!(r.pc, 0);
+        assert_eq!(r.tc, 0);
+        for i in 0..32 {
+            assert_eq!(r.gpr[i], 0, "gpr[{}] not zero", i);
+        }
+    }
+
+    /// Default trait 实现与 new() 等价。
+    #[test]
+    fn default_equals_new() {
+        let a = Regs::new();
+        let b = Regs::default();
+        assert_eq!(a.ip, b.ip);
+        assert_eq!(a.ac, b.ac);
+        assert_eq!(a.gpr, b.gpr);
+    }
+
+    /// cc() 从 ac 正确解析条件码（含高位噪声）。
+    #[test]
+    fn cc_reads_from_ac_low_bits() {
+        let mut r = Regs::new();
+        r.ac = 0xDEAD_0005; // bits[2:0] = 101 → n=1, e=0, g=1
+        let cc = r.cc();
+        assert!(cc.n);
+        assert!(!cc.e);
+        assert!(cc.g);
+    }
+
+    /// dump() 不 panic（仅验证可调用）。
+    #[test]
+    fn dump_no_panic() {
+        let mut r = Regs::new();
+        r.ip = 0x0080_0000;
+        r.w(0, 42);
+        r.dump(); // 不应 panic
+    }
 }

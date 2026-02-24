@@ -224,6 +224,11 @@ mod tests {
         bus
     }
 
+    /// 构造 REG 格式 addo 指令字（opcode=0x59, ext=0）。
+    fn addo_word(dst: usize, src2: usize, src1: usize) -> u32 {
+        (0x59u32) << 24 | (dst as u32) << 19 | (src2 as u32) << 14 | src1 as u32
+    }
+
     #[test]
     fn single_step_add() {
         // addo g1, g2, g0（g1=10, g2=32 → g0=42）
@@ -266,9 +271,139 @@ mod tests {
         let mut bus = make_bus_with_program(&[b_self]);
         let mut cpu = Cpu::new(0x0080_0000);
 
-        // 设置最大周期，不能跑死
-        let spent = cpu.run(&mut bus, 100);
-        assert!(spent <= 100);
+        // 设置最大周期，不能跑死（B 每条 3 周期，99 = 33×3 可整除）
+        let spent = cpu.run(&mut bus, 99);
+        assert!(spent <= 99);
         assert_eq!(cpu.state, CpuState::Running);
+    }
+
+    // -----------------------------------------------------------------------
+    // 新增综合测试
+    // -----------------------------------------------------------------------
+
+    /// 执行未实现指令后 CPU 进入 Halted 状态。
+    #[test]
+    fn unimplemented_insn_halts() {
+        let bad_word: u32 = 0x4000_0000; // opcode=0x40，不在任何格式
+        let mut bus = make_bus_with_program(&[bad_word]);
+        let mut cpu = Cpu::new(0x0080_0000);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.state, CpuState::Halted);
+
+        // Halted 状态下 step 返回 0
+        assert_eq!(cpu.step(&mut bus), 0);
+    }
+
+    /// Paused 状态下 step 返回 0，不执行任何指令。
+    #[test]
+    fn paused_step_returns_zero() {
+        let word = addo_word(0, 1, 2);
+        let mut bus = make_bus_with_program(&[word]);
+        let mut cpu = Cpu::new(0x0080_0000);
+        cpu.state = CpuState::Paused;
+        let cycles = cpu.step(&mut bus);
+        assert_eq!(cycles, 0);
+        assert_eq!(cpu.insn_count, 0); // 未执行任何指令
+    }
+
+    /// insn_count 随每次 step 递增。
+    #[test]
+    fn insn_count_increments() {
+        let word = addo_word(0, 0, 0); // addo g0, g0, g0（g0=0）
+        let _stop = 0x0800_0000u32; // B disp=0（无限循环，用于停下来数数）
+        let mut bus = make_bus_with_program(&[word, word, word]);
+        let mut cpu = Cpu::new(0x0080_0000);
+
+        for i in 1..=3 {
+            cpu.step(&mut bus);
+            assert_eq!(cpu.insn_count, i);
+        }
+    }
+
+    /// 多步执行正确顺序流。
+    #[test]
+    fn multi_step_sequential() {
+        // addo g0, g1, g1：g1=1 每步加 1
+        // addo g1, g1, g1：dst=g1, src2=g1, src1=g1 → g1 = g1 + g1
+        // 用简单序列：3 条 addo g0, g1, g0（g0 += g1）
+        // word = dst=0, src2=0, src1=1 → addo g0, g1, g0 (full=0x590)
+        let word = addo_word(0, 0, 1); // g0 = g0 + g1
+        let mut bus = make_bus_with_program(&[word, word, word]);
+        let mut cpu = Cpu::new(0x0080_0000);
+        cpu.regs.w(0, 0);
+        cpu.regs.w(1, 10);
+
+        cpu.step(&mut bus); // g0 = 0+10 = 10
+        assert_eq!(cpu.regs.r(0), 10);
+        cpu.step(&mut bus); // g0 = 10+10 = 20
+        assert_eq!(cpu.regs.r(0), 20);
+        cpu.step(&mut bus); // g0 = 20+10 = 30
+        assert_eq!(cpu.regs.r(0), 30);
+    }
+
+    /// remove_breakpoint 移除后断点不再触发。
+    #[test]
+    fn remove_breakpoint_no_longer_triggers() {
+        let word = addo_word(0, 0, 0);
+        let mut bus = make_bus_with_program(&[word, word]);
+        let mut cpu = Cpu::new(0x0080_0000);
+        cpu.add_breakpoint(0x0080_0004);
+
+        // 第一步正常
+        cpu.step(&mut bus);
+        // 命中断点
+        cpu.step(&mut bus);
+        assert_eq!(cpu.state, CpuState::Paused);
+
+        // 移除断点，恢复后再步进不再暂停
+        cpu.remove_breakpoint(0x0080_0004);
+        cpu.resume();
+        cpu.step(&mut bus); // 原断点地址，现在可正常执行
+        assert_eq!(cpu.state, CpuState::Running);
+    }
+
+    /// 断点列表（smoke test：不 panic）。
+    #[test]
+    fn list_breakpoints_no_panic() {
+        let mut cpu = Cpu::new(0x0);
+        cpu.add_breakpoint(0x1000);
+        cpu.add_breakpoint(0x2000);
+        cpu.list_breakpoints(); // 打印，不 panic
+    }
+
+    /// dump_regs 不 panic。
+    #[test]
+    fn dump_regs_no_panic() {
+        let cpu = Cpu::new(0x0080_0000);
+        cpu.dump_regs();
+    }
+
+    /// tick_with_bus 驱动 CPU 运行，返回消耗周期。
+    #[test]
+    fn tick_with_bus_runs_cycles() {
+        let b_self: u32 = 0x0800_0000; // B disp=0
+        let mut bus = make_bus_with_program(&[b_self]);
+        let mut cpu = Cpu::new(0x0080_0000);
+
+        use model2_core::clock::RunToken;
+        let token = RunToken { cycles: 30 };
+        let spent = cpu.tick_with_bus(&mut bus, token);
+        assert!(spent > 0 && spent <= 30);
+    }
+
+    /// trace 模式开启后不 panic，仍正确执行。
+    #[test]
+    fn trace_mode_no_panic() {
+        let word = addo_word(0, 1, 2);
+        let mut bus = make_bus_with_program(&[word]);
+        let mut cpu = Cpu::new(0x0080_0000);
+        cpu.trace = true;
+        cpu.regs.w(1, 1);
+        cpu.regs.w(2, 2);
+
+        let cycles = cpu.step(&mut bus);
+        assert!(cycles > 0);
+        assert_eq!(cpu.regs.r(0), 3);
     }
 }
